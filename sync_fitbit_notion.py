@@ -87,17 +87,42 @@ def get_fitbit_data(date):
         if response.status_code == 200:
             sleep_data = response.json()
             if sleep_data.get('sleep'):
-                main_sleep = sleep_data['sleep'][0]
+                # Find the main sleep session (isMainSleep: true) or longest sleep
+                main_sleep = None
+                for sleep_session in sleep_data['sleep']:
+                    if sleep_session.get('isMainSleep', False):
+                        main_sleep = sleep_session
+                        break
+                
+                # Fallback to first session if no main sleep found
+                if not main_sleep:
+                    main_sleep = sleep_data['sleep'][0]
                 data['sleep_hours'] = round(main_sleep.get('minutesAsleep', 0) / 60, 1)
                 data['sleep_efficiency'] = main_sleep.get('efficiency', 0)
                 data['sleep_start'] = main_sleep.get('startTime', '')
                 data['sleep_end'] = main_sleep.get('endTime', '')
                 
-                # Sleep stages
+                # Sleep stages - handle both new and old Fitbit formats
                 levels = main_sleep.get('levels', {}).get('summary', {})
-                data['deep_sleep'] = levels.get('deep', {}).get('minutes', 0)
-                data['light_sleep'] = levels.get('light', {}).get('minutes', 0)
-                data['rem_sleep'] = levels.get('rem', {}).get('minutes', 0)
+                if levels:
+                    # New format with detailed stages
+                    data['deep_sleep'] = levels.get('deep', {}).get('minutes', 0)
+                    data['light_sleep'] = levels.get('light', {}).get('minutes', 0)
+                    data['rem_sleep'] = levels.get('rem', {}).get('minutes', 0)
+                else:
+                    # Old format - parse minuteData to calculate stages
+                    minute_data = main_sleep.get('minuteData', [])
+                    if minute_data:
+                        asleep_minutes = sum(1 for m in minute_data if m.get('value') == '1')
+                        restless_minutes = sum(1 for m in minute_data if m.get('value') == '2')
+                        # For old format, treat all sleep as "light sleep"
+                        data['light_sleep'] = asleep_minutes
+                        data['deep_sleep'] = 0  # Not available in old format
+                        data['rem_sleep'] = 0   # Not available in old format
+                    else:
+                        data['deep_sleep'] = 0
+                        data['light_sleep'] = 0
+                        data['rem_sleep'] = 0
         
         # Heart rate data (resting + zones)
         response = requests.get(f'{base_url}/activities/heart/date/{date}/1d.json', headers=headers)
