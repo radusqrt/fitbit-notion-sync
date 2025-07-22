@@ -61,6 +61,22 @@ def refresh_fitbit_token():
     else:
         raise Exception(f"Failed to refresh token: {response.text}")
 
+def make_api_request_with_refresh(url, headers):
+    """Make API request with automatic token refresh if needed"""
+    response = requests.get(url, headers=headers)
+    
+    if response.status_code == 401:  # Token expired
+        print("🔄 Access token expired, refreshing...")
+        try:
+            new_token = refresh_fitbit_token()
+            headers['Authorization'] = f'Bearer {new_token}'
+            # Retry with new token
+            response = requests.get(url, headers=headers)
+        except Exception as e:
+            print(f"❌ Token refresh failed: {e}")
+    
+    return response
+
 def get_fitbit_data(date):
     """Fetch comprehensive Fitbit data for a specific date"""
     load_dotenv()
@@ -73,7 +89,7 @@ def get_fitbit_data(date):
     
     try:
         # Activity summary
-        response = requests.get(f'{base_url}/activities/date/{date}.json', headers=headers)
+        response = make_api_request_with_refresh(f'{base_url}/activities/date/{date}.json', headers)
         if response.status_code == 200:
             activities = response.json()
             summary = activities['summary']
@@ -90,7 +106,7 @@ def get_fitbit_data(date):
         # Use sleep log list endpoint to get stages data
         from datetime import datetime, timedelta
         next_day = (datetime.strptime(date, '%Y-%m-%d') + timedelta(days=1)).strftime('%Y-%m-%d')
-        response = requests.get(f'https://api.fitbit.com/1.2/user/-/sleep/list.json?beforeDate={next_day}&sort=desc&limit=5', headers=headers_v12)
+        response = make_api_request_with_refresh(f'https://api.fitbit.com/1.2/user/-/sleep/list.json?beforeDate={next_day}&sort=desc&limit=5', headers_v12)
         if response.status_code == 200:
             sleep_data = response.json()
             if sleep_data.get('sleep'):
@@ -161,7 +177,7 @@ def get_fitbit_data(date):
                         data['rem_sleep'] = 0
         
         # Heart rate data (resting + zones)
-        response = requests.get(f'{base_url}/activities/heart/date/{date}/1d.json', headers=headers)
+        response = make_api_request_with_refresh(f'{base_url}/activities/heart/date/{date}/1d.json', headers)
         if response.status_code == 200:
             hr_data = response.json()
             if hr_data.get('activities-heart'):
@@ -180,7 +196,7 @@ def get_fitbit_data(date):
                         data['peak_minutes'] = zone.get('minutes', 0)
         
         # Weight data (if available)
-        response = requests.get(f'{base_url}/body/log/weight/date/{date}.json', headers=headers)
+        response = make_api_request_with_refresh(f'{base_url}/body/log/weight/date/{date}.json', headers)
         if response.status_code == 200:
             weight_data = response.json()
             if weight_data.get('weight'):
@@ -189,14 +205,14 @@ def get_fitbit_data(date):
                 data['bmi'] = latest_weight.get('bmi')
         
         # Body fat data (if available)
-        response = requests.get(f'{base_url}/body/log/fat/date/{date}.json', headers=headers)
+        response = make_api_request_with_refresh(f'{base_url}/body/log/fat/date/{date}.json', headers)
         if response.status_code == 200:
             fat_data = response.json()
             if fat_data.get('fat'):
                 data['body_fat'] = fat_data['fat'][0].get('fat')
         
         # HRV data (Heart Rate Variability)
-        response = requests.get(f'{base_url}/hrv/date/{date}.json', headers=headers)
+        response = make_api_request_with_refresh(f'{base_url}/hrv/date/{date}.json', headers)
         if response.status_code == 200:
             hrv_data = response.json()
             if hrv_data.get('hrv'):

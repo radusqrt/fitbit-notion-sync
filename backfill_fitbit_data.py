@@ -28,8 +28,51 @@ def get_date_range(start_date=None, end_date=None, last_week=False):
     
     return start_date, end_date
 
+def refresh_fitbit_token():
+    """Refresh Fitbit access token and return new token"""
+    load_dotenv()
+    
+    client_id = os.getenv('FITBIT_CLIENT_ID')
+    client_secret = os.getenv('FITBIT_CLIENT_SECRET')
+    refresh_token = os.getenv('FITBIT_REFRESH_TOKEN')
+    
+    if not all([client_id, client_secret, refresh_token]):
+        return None
+    
+    # Prepare token refresh request
+    token_url = "https://api.fitbit.com/oauth2/token"
+    token_data = {
+        'grant_type': 'refresh_token',
+        'refresh_token': refresh_token
+    }
+    
+    # Basic auth with client credentials
+    import base64
+    credentials = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+    headers = {
+        'Authorization': f'Basic {credentials}',
+        'Content-Type': 'application/x-www-form-urlencoded'
+    }
+    
+    response = requests.post(token_url, data=token_data, headers=headers)
+    
+    if response.status_code == 200:
+        tokens = response.json()
+        new_access_token = tokens['access_token']
+        new_refresh_token = tokens['refresh_token']
+        
+        # Update environment variables in memory
+        os.environ['FITBIT_ACCESS_TOKEN'] = new_access_token
+        os.environ['FITBIT_REFRESH_TOKEN'] = new_refresh_token
+        
+        print("   🔄 Access token refreshed automatically")
+        return new_access_token
+    else:
+        print(f"   ❌ Failed to refresh token: {response.status_code}")
+        return None
+
 def make_api_request(url, headers, description="API call"):
-    """Make API request with rate limiting and retry logic"""
+    """Make API request with rate limiting, retry logic, and automatic token refresh"""
     max_retries = 3
     base_delay = 2  # Start with 2 second delay
     
@@ -38,6 +81,18 @@ def make_api_request(url, headers, description="API call"):
         
         if response.status_code == 200:
             return response
+        elif response.status_code == 401:  # Token expired
+            print(f"   🔄 Token expired for {description}, refreshing...")
+            new_token = refresh_fitbit_token()
+            if new_token:
+                # Update headers with new token
+                headers['Authorization'] = f'Bearer {new_token}'
+                # Retry the request once with new token
+                response = requests.get(url, headers=headers)
+                if response.status_code == 200:
+                    return response
+            print(f"   ❌ {description} failed even after token refresh")
+            break
         elif response.status_code == 429:  # Rate limited
             retry_delay = base_delay * (2 ** attempt)  # Exponential backoff
             print(f"   Rate limited on {description}, waiting {retry_delay}s...")
