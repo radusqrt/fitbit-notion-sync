@@ -8,6 +8,7 @@ import os
 import sys
 import argparse
 import requests
+import time
 from datetime import datetime, timedelta
 from notion_client import Client
 from dotenv import load_dotenv
@@ -27,8 +28,28 @@ def get_date_range(start_date=None, end_date=None, last_week=False):
     
     return start_date, end_date
 
+def make_api_request(url, headers, description="API call"):
+    """Make API request with rate limiting and retry logic"""
+    max_retries = 3
+    base_delay = 2  # Start with 2 second delay
+    
+    for attempt in range(max_retries):
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code == 200:
+            return response
+        elif response.status_code == 429:  # Rate limited
+            retry_delay = base_delay * (2 ** attempt)  # Exponential backoff
+            print(f"   Rate limited on {description}, waiting {retry_delay}s...")
+            time.sleep(retry_delay)
+        else:
+            print(f"   {description} error {response.status_code}: {response.text}")
+            break
+    
+    return response
+
 def get_fitbit_data(date):
-    """Fetch comprehensive Fitbit data for a specific date (reused from sync script)"""
+    """Fetch comprehensive Fitbit data for a specific date with rate limiting"""
     load_dotenv()
     access_token = os.getenv('FITBIT_ACCESS_TOKEN')
     
@@ -37,9 +58,12 @@ def get_fitbit_data(date):
     
     data = {}
     
+    # Add longer delays between API calls to avoid rate limiting
+    api_delay = 2  # Increased to 2 seconds
+    
     try:
         # Activity summary
-        response = requests.get(f'{base_url}/activities/date/{date}.json', headers=headers)
+        response = make_api_request(f'{base_url}/activities/date/{date}.json', headers, "Activity")
         if response.status_code == 200:
             activities = response.json()
             summary = activities['summary']
@@ -47,6 +71,8 @@ def get_fitbit_data(date):
             data['distance'] = summary.get('distances', [{}])[0].get('distance', 0) if summary.get('distances') else 0
             data['calories'] = summary.get('caloriesOut', 0)
             data['active_minutes'] = summary.get('fairlyActiveMinutes', 0) + summary.get('veryActiveMinutes', 0)
+        
+        time.sleep(api_delay)  # Delay between API calls
         
         # Sleep data with detailed stages - use sleep log list endpoint for stages data
         headers_v12 = headers.copy()
@@ -56,7 +82,7 @@ def get_fitbit_data(date):
         # Use sleep log list endpoint to get stages data
         from datetime import datetime, timedelta
         next_day = (datetime.strptime(date, '%Y-%m-%d') + timedelta(days=1)).strftime('%Y-%m-%d')
-        response = requests.get(f'https://api.fitbit.com/1.2/user/-/sleep/list.json?beforeDate={next_day}&sort=desc&limit=5', headers=headers_v12)
+        response = make_api_request(f'https://api.fitbit.com/1.2/user/-/sleep/list.json?beforeDate={next_day}&sort=desc&limit=5', headers_v12, "Sleep")
         if response.status_code == 200:
             sleep_data = response.json()
             if sleep_data.get('sleep'):
@@ -128,8 +154,10 @@ def get_fitbit_data(date):
                             data['light_sleep'] = 0
                             data['rem_sleep'] = 0
         
+        time.sleep(api_delay)  # Delay between API calls
+        
         # Heart rate data (resting + zones)
-        response = requests.get(f'{base_url}/activities/heart/date/{date}/1d.json', headers=headers)
+        response = make_api_request(f'{base_url}/activities/heart/date/{date}/1d.json', headers, "Heart Rate")
         if response.status_code == 200:
             hr_data = response.json()
             if hr_data.get('activities-heart'):
@@ -147,8 +175,10 @@ def get_fitbit_data(date):
                     elif 'peak' in zone_name:
                         data['peak_minutes'] = zone.get('minutes', 0)
         
+        time.sleep(api_delay)  # Delay between API calls
+        
         # Weight data (if available)
-        response = requests.get(f'{base_url}/body/log/weight/date/{date}.json', headers=headers)
+        response = make_api_request(f'{base_url}/body/log/weight/date/{date}.json', headers, "Weight")
         if response.status_code == 200:
             weight_data = response.json()
             if weight_data.get('weight'):
@@ -156,15 +186,19 @@ def get_fitbit_data(date):
                 data['weight'] = latest_weight.get('weight')
                 data['bmi'] = latest_weight.get('bmi')
         
+        time.sleep(api_delay)  # Delay between API calls
+        
         # Body fat data (if available)
-        response = requests.get(f'{base_url}/body/log/fat/date/{date}.json', headers=headers)
+        response = make_api_request(f'{base_url}/body/log/fat/date/{date}.json', headers, "Body Fat")
         if response.status_code == 200:
             fat_data = response.json()
             if fat_data.get('fat'):
                 data['body_fat'] = fat_data['fat'][0].get('fat')
         
+        time.sleep(api_delay)  # Delay between API calls
+        
         # HRV data (Heart Rate Variability)
-        response = requests.get(f'{base_url}/hrv/date/{date}.json', headers=headers)
+        response = make_api_request(f'{base_url}/hrv/date/{date}.json', headers, "HRV")
         if response.status_code == 200:
             hrv_data = response.json()
             if hrv_data.get('hrv'):
@@ -318,6 +352,10 @@ def main():
             updated += 1
         else:
             errors += 1
+        
+        # Longer delay between days to avoid overwhelming API
+        if date != dates[-1]:  # Don't delay after the last date
+            time.sleep(5)  # 5 second delay between days
     
     # Summary
     print(f"\n🎉 Backfill completed!")
