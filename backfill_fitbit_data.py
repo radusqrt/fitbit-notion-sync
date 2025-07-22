@@ -1,68 +1,34 @@
 #!/usr/bin/env python3
 """
-Sync Fitbit data to Notion database
-Fetches yesterday's health metrics and updates Notion
+Backfill Fitbit data to Notion database for a date range
+Can be run manually with custom date ranges or defaults to last week
 """
 
 import os
+import sys
+import argparse
 import requests
 from datetime import datetime, timedelta
 from notion_client import Client
 from dotenv import load_dotenv
 
-def get_yesterday_date():
-    """Get yesterday's date in YYYY-MM-DD format (Zurich timezone)"""
-    # For simplicity, using UTC. In production, consider timezone conversion
-    yesterday = datetime.now() - timedelta(days=1)
-    return yesterday.strftime('%Y-%m-%d')
-
-def refresh_fitbit_token():
-    """Refresh the Fitbit access token if needed"""
-    load_dotenv()
+def get_date_range(start_date=None, end_date=None, last_week=False):
+    """Get date range for backfill"""
+    if last_week or (not start_date and not end_date):
+        # Default to last 7 days
+        end_date = datetime.now() - timedelta(days=1)  # Yesterday
+        start_date = end_date - timedelta(days=6)  # 7 days total
+        return start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')
     
-    client_id = os.getenv('FITBIT_CLIENT_ID')
-    client_secret = os.getenv('FITBIT_CLIENT_SECRET')
-    refresh_token = os.getenv('FITBIT_REFRESH_TOKEN')
+    if start_date and not end_date:
+        end_date = start_date
+    elif end_date and not start_date:
+        start_date = end_date
     
-    headers = {
-        'Authorization': f'Basic {requests.auth._basic_auth_str(client_id, client_secret)}',
-        'Content-Type': 'application/x-www-form-urlencoded'
-    }
-    
-    data = {
-        'grant_type': 'refresh_token',
-        'refresh_token': refresh_token
-    }
-    
-    response = requests.post('https://api.fitbit.com/oauth2/token', data=data, headers=headers)
-    
-    if response.status_code == 200:
-        tokens = response.json()
-        new_access_token = tokens['access_token']
-        new_refresh_token = tokens['refresh_token']
-        
-        # Update .env file
-        with open('.env', 'r') as f:
-            content = f.read()
-        
-        content = content.replace(
-            f'FITBIT_ACCESS_TOKEN={os.getenv("FITBIT_ACCESS_TOKEN")}',
-            f'FITBIT_ACCESS_TOKEN={new_access_token}'
-        )
-        content = content.replace(
-            f'FITBIT_REFRESH_TOKEN={refresh_token}',
-            f'FITBIT_REFRESH_TOKEN={new_refresh_token}'
-        )
-        
-        with open('.env', 'w') as f:
-            f.write(content)
-            
-        return new_access_token
-    else:
-        raise Exception(f"Failed to refresh token: {response.text}")
+    return start_date, end_date
 
 def get_fitbit_data(date):
-    """Fetch comprehensive Fitbit data for a specific date"""
+    """Fetch comprehensive Fitbit data for a specific date (reused from sync script)"""
     load_dotenv()
     access_token = os.getenv('FITBIT_ACCESS_TOKEN')
     
@@ -107,58 +73,60 @@ def get_fitbit_data(date):
                         if sleep_session.get('dateOfSleep') == date:
                             main_sleep = sleep_session
                             break
-                data['sleep_hours'] = round(main_sleep.get('minutesAsleep', 0) / 60, 1)
-                data['sleep_efficiency'] = main_sleep.get('efficiency', 0)
-                data['sleep_start'] = main_sleep.get('startTime', '')
-                data['sleep_end'] = main_sleep.get('endTime', '')
                 
-                # Sleep stages - handle both new and old Fitbit formats
-                levels = main_sleep.get('levels', {})
-                
-                # First try new format with levels.summary
-                if 'summary' in levels and levels['summary']:
-                    summary = levels['summary']
-                    data['deep_sleep'] = summary.get('deep', {}).get('minutes', 0)
-                    data['light_sleep'] = summary.get('light', {}).get('minutes', 0)
-                    data['rem_sleep'] = summary.get('rem', {}).get('minutes', 0)
-                
-                # If no summary, try parsing levels.data for sleep stages
-                elif 'data' in levels and levels['data']:
-                    stage_minutes = {'deep': 0, 'light': 0, 'rem': 0}
+                if main_sleep:
+                    data['sleep_hours'] = round(main_sleep.get('minutesAsleep', 0) / 60, 1)
+                    data['sleep_efficiency'] = main_sleep.get('efficiency', 0)
+                    data['sleep_start'] = main_sleep.get('startTime', '')
+                    data['sleep_end'] = main_sleep.get('endTime', '')
                     
-                    # Parse data groupings (stages > 3 minutes)
-                    for period in levels['data']:
-                        stage = period.get('level', '')
-                        if stage in stage_minutes:
-                            # Convert seconds to minutes
-                            duration_seconds = period.get('seconds', 0)
-                            stage_minutes[stage] += duration_seconds // 60
+                    # Sleep stages - handle both new and old Fitbit formats
+                    levels = main_sleep.get('levels', {})
                     
-                    # Parse shortData if available (short wake periods ≤ 3 minutes)
-                    if 'shortData' in levels:
-                        for period in levels.get('shortData', []):
+                    # First try new format with levels.summary
+                    if 'summary' in levels and levels['summary']:
+                        summary = levels['summary']
+                        data['deep_sleep'] = summary.get('deep', {}).get('minutes', 0)
+                        data['light_sleep'] = summary.get('light', {}).get('minutes', 0)
+                        data['rem_sleep'] = summary.get('rem', {}).get('minutes', 0)
+                    
+                    # If no summary, try parsing levels.data for sleep stages
+                    elif 'data' in levels and levels['data']:
+                        stage_minutes = {'deep': 0, 'light': 0, 'rem': 0}
+                        
+                        # Parse data groupings (stages > 3 minutes)
+                        for period in levels['data']:
                             stage = period.get('level', '')
                             if stage in stage_minutes:
+                                # Convert seconds to minutes
                                 duration_seconds = period.get('seconds', 0)
                                 stage_minutes[stage] += duration_seconds // 60
+                        
+                        # Parse shortData if available (short wake periods ≤ 3 minutes)
+                        if 'shortData' in levels:
+                            for period in levels.get('shortData', []):
+                                stage = period.get('level', '')
+                                if stage in stage_minutes:
+                                    duration_seconds = period.get('seconds', 0)
+                                    stage_minutes[stage] += duration_seconds // 60
+                        
+                        data['deep_sleep'] = stage_minutes['deep']
+                        data['light_sleep'] = stage_minutes['light']
+                        data['rem_sleep'] = stage_minutes['rem']
                     
-                    data['deep_sleep'] = stage_minutes['deep']
-                    data['light_sleep'] = stage_minutes['light']
-                    data['rem_sleep'] = stage_minutes['rem']
-                
-                else:
-                    # Fallback to old format - parse minuteData
-                    minute_data = main_sleep.get('minuteData', [])
-                    if minute_data:
-                        asleep_minutes = sum(1 for m in minute_data if m.get('value') == '1')
-                        # For old format, treat all sleep as "light sleep"
-                        data['light_sleep'] = asleep_minutes
-                        data['deep_sleep'] = 0  # Not available in old format
-                        data['rem_sleep'] = 0   # Not available in old format
                     else:
-                        data['deep_sleep'] = 0
-                        data['light_sleep'] = 0
-                        data['rem_sleep'] = 0
+                        # Fallback to old format - parse minuteData
+                        minute_data = main_sleep.get('minuteData', [])
+                        if minute_data:
+                            asleep_minutes = sum(1 for m in minute_data if m.get('value') == '1')
+                            # For old format, treat all sleep as "light sleep"
+                            data['light_sleep'] = asleep_minutes
+                            data['deep_sleep'] = 0  # Not available in old format
+                            data['rem_sleep'] = 0   # Not available in old format
+                        else:
+                            data['deep_sleep'] = 0
+                            data['light_sleep'] = 0
+                            data['rem_sleep'] = 0
         
         # Heart rate data (resting + zones)
         response = requests.get(f'{base_url}/activities/heart/date/{date}/1d.json', headers=headers)
@@ -211,11 +179,11 @@ def get_fitbit_data(date):
         return data
         
     except requests.exceptions.RequestException as e:
-        print(f"❌ Error fetching Fitbit data: {e}")
+        print(f"❌ Error fetching Fitbit data for {date}: {e}")
         return None
 
 def update_notion_database(date, fitbit_data):
-    """Update or create entry in Notion database"""
+    """Update or create entry in Notion database (reused from sync script)"""
     load_dotenv()
     
     notion = Client(auth=os.getenv('NOTION_TOKEN'))
@@ -262,14 +230,8 @@ def update_notion_database(date, fitbit_data):
         time_part = fitbit_data['sleep_end'].split('T')[1].split(':')
         properties["Sleep End"] = {"rich_text": [{"text": {"content": f"{time_part[0]}:{time_part[1]}"}}]}
     
-    if fitbit_data.get('weight'):
-        properties["Weight (kg)"] = {"number": fitbit_data['weight']}
-    
-    if fitbit_data.get('bmi'):
-        properties["BMI"] = {"number": fitbit_data['bmi']}
-    
-    if fitbit_data.get('body_fat'):
-        properties["Body Fat %"] = {"number": fitbit_data['body_fat']}
+    # Optional body metrics (only add if data exists and columns exist in database)
+    # These columns might not exist in all databases, so we'll skip them gracefully
     
     if fitbit_data.get('hrv_daily_rmssd'):
         properties["HRV Daily RMSSD"] = {"number": fitbit_data['hrv_daily_rmssd']}
@@ -282,39 +244,84 @@ def update_notion_database(date, fitbit_data):
             # Update existing page
             page_id = existing_pages['results'][0]['id']
             notion.pages.update(page_id=page_id, properties=properties)
-            print(f"✅ Updated existing entry for {date}")
+            return "updated"
         else:
             # Create new page
             notion.pages.create(
                 parent={"database_id": database_id},
                 properties=properties
             )
-            print(f"✅ Created new entry for {date}")
+            return "created"
             
     except Exception as e:
-        print(f"❌ Error updating Notion: {e}")
+        print(f"❌ Error updating Notion for {date}: {e}")
+        return "error"
+
+def generate_date_list(start_date, end_date):
+    """Generate list of dates between start and end date (inclusive)"""
+    start = datetime.strptime(start_date, '%Y-%m-%d')
+    end = datetime.strptime(end_date, '%Y-%m-%d')
+    
+    date_list = []
+    current = start
+    while current <= end:
+        date_list.append(current.strftime('%Y-%m-%d'))
+        current += timedelta(days=1)
+    
+    return date_list
 
 def main():
-    """Main sync function"""
-    print("🔄 Starting Fitbit → Notion sync...")
+    """Main backfill function"""
+    parser = argparse.ArgumentParser(description='Backfill Fitbit data to Notion database')
+    parser.add_argument('--start-date', '-s', type=str, help='Start date (YYYY-MM-DD)')
+    parser.add_argument('--end-date', '-e', type=str, help='End date (YYYY-MM-DD)')
+    parser.add_argument('--last-week', '-w', action='store_true', help='Backfill last 7 days (default if no dates provided)')
     
-    date = get_yesterday_date()
-    print(f"📅 Syncing data for: {date}")
+    args = parser.parse_args()
     
-    # Get Fitbit data
-    fitbit_data = get_fitbit_data(date)
-    if not fitbit_data:
-        print("❌ Failed to fetch Fitbit data")
-        return
+    # Get date range
+    start_date, end_date = get_date_range(args.start_date, args.end_date, args.last_week)
     
-    print("📊 Fitbit data fetched:")
-    for key, value in fitbit_data.items():
-        print(f"  {key}: {value}")
+    print("🔄 Starting Fitbit → Notion backfill...")
+    print(f"📅 Date range: {start_date} to {end_date}")
     
-    # Update Notion
-    update_notion_database(date, fitbit_data)
+    # Generate list of dates to process
+    dates = generate_date_list(start_date, end_date)
     
-    print("🎉 Sync completed!")
+    print(f"📊 Processing {len(dates)} days...")
+    
+    # Track results
+    created = 0
+    updated = 0
+    errors = 0
+    
+    for date in dates:
+        print(f"\n📅 Processing {date}...")
+        
+        # Get Fitbit data
+        fitbit_data = get_fitbit_data(date)
+        if not fitbit_data:
+            print(f"❌ Failed to fetch Fitbit data for {date}")
+            errors += 1
+            continue
+        
+        # Show key metrics
+        print(f"   Steps: {fitbit_data.get('steps', 0)}, Sleep: {fitbit_data.get('sleep_hours', 0)}h, HRV: {fitbit_data.get('hrv_daily_rmssd', 'N/A')}")
+        
+        # Update Notion
+        result = update_notion_database(date, fitbit_data)
+        if result == "created":
+            print(f"✅ Created entry for {date}")
+            created += 1
+        elif result == "updated":
+            print(f"✅ Updated entry for {date}")
+            updated += 1
+        else:
+            errors += 1
+    
+    # Summary
+    print(f"\n🎉 Backfill completed!")
+    print(f"📊 Results: {created} created, {updated} updated, {errors} errors")
 
 if __name__ == "__main__":
     main()

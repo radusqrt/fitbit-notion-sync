@@ -5,10 +5,12 @@ Automated daily sync of Fitbit health data to a Notion database using GitHub Act
 ## Features
 
 - **Automated Daily Sync**: Runs every day at 9 AM Zurich time
+- **Manual Backfill**: Fill in missing historical data for any date range
 - **Comprehensive Health Metrics**:
   - Activity: Steps, distance, calories, active minutes
-  - Sleep: Total hours, efficiency, start/end times, sleep stages
+  - Sleep: Total hours, efficiency, start/end times, sleep stages (deep/light/REM)
   - Heart Rate: Resting HR, fat burn/cardio/peak zones
+  - HRV: Daily and deep sleep heart rate variability
   - Body: Weight, BMI, body fat percentage (if available)
 
 ## Setup
@@ -73,7 +75,11 @@ Your Notion database should have these columns:
 - Cardio Zone (min) (Number)
 - Peak Zone (min) (Number)
 
-**Body Metrics:**
+**HRV Metrics:**
+- HRV Daily RMSSD (Number)
+- HRV Deep RMSSD (Number)
+
+**Body Metrics (optional):**
 - Weight (kg) (Number)
 - BMI (Number)
 - Body Fat % (Number)
@@ -85,10 +91,27 @@ The workflow runs automatically every day at 9 AM Zurich time via GitHub Actions
 
 ### Manual Sync
 ```bash
-# Run locally
+# Run locally for today
 python sync_fitbit_notion.py
 
 # Or trigger GitHub Action manually from the Actions tab
+```
+
+### Backfill Historical Data
+```bash
+# Backfill last week (local)
+python backfill_fitbit_data.py
+
+# Backfill specific date range (local)
+python backfill_fitbit_data.py --start-date 2025-07-01 --end-date 2025-07-10
+
+# Backfill single day (local)
+python backfill_fitbit_data.py --start-date 2025-07-15
+
+# Or use GitHub Actions:
+# 1. Go to Actions tab → "Manual Backfill Fitbit Data"
+# 2. Click "Run workflow"
+# 3. Choose date range or select "last week"
 ```
 
 ### Initial OAuth Setup
@@ -99,9 +122,11 @@ python oauth_helper.py
 
 ## Files
 
-- `sync_fitbit_notion.py` - Main sync script
+- `sync_fitbit_notion.py` - Main daily sync script
+- `backfill_fitbit_data.py` - Historical data backfill script
 - `oauth_helper.py` - One-time OAuth setup helper
-- `.github/workflows/sync-health-data.yml` - GitHub Actions workflow
+- `.github/workflows/sync-health-data.yml` - Daily sync GitHub Actions workflow
+- `.github/workflows/manual-backfill.yml` - Manual backfill GitHub Actions workflow
 - `requirements.txt` - Python dependencies
 
 ## Data Handling
