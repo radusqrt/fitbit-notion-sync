@@ -24,17 +24,29 @@ Automated daily sync of Fitbit health data to a Notion database using GitHub Act
 3. Copy the integration token
 4. Share your health tracking database with the integration
 
-### 3. GitHub Secrets
-Add these secrets to your GitHub repository (Settings → Secrets and variables → Actions):
+### 3. Get OAuth Tokens
+Run the OAuth helper to get your personal access tokens:
+```bash
+python oauth_helper.py
+```
+This will guide you through the Fitbit authorization process and save tokens to your `.env` file.
 
-- `FITBIT_CLIENT_ID`
-- `FITBIT_CLIENT_SECRET`
-- `FITBIT_ACCESS_TOKEN`
-- `FITBIT_REFRESH_TOKEN`
-- `NOTION_TOKEN`
-- `NOTION_DATABASE_ID`
+### 4. GitHub Secrets Setup
+**Required for automation:** Copy values from your `.env` file to GitHub Secrets.
 
-### 4. Notion Database Schema
+Go to your repository → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**
+
+Add these 6 secrets:
+- `FITBIT_CLIENT_ID` - Your Fitbit app Client ID
+- `FITBIT_CLIENT_SECRET` - Your Fitbit app Client Secret  
+- `FITBIT_ACCESS_TOKEN` - Generated from OAuth flow
+- `FITBIT_REFRESH_TOKEN` - Generated from OAuth flow
+- `NOTION_TOKEN` - Your Notion integration token
+- `NOTION_DATABASE_ID` - Your Notion database ID (from database URL)
+
+**Note:** GitHub Actions requires these secrets to access your APIs. The local `.env` file only works for manual runs.
+
+### 5. Notion Database Schema
 Your Notion database should have these columns:
 
 **Required:**
@@ -108,7 +120,7 @@ python oauth_helper.py
 ## Troubleshooting
 
 1. **Missing Data**: Check if your Fitbit device is syncing properly
-2. **Token Errors**: Re-run the OAuth flow with `oauth_helper.py`
+2. **Token Errors**: Re-run the OAuth flow with `oauth_helper.py` and update GitHub Secrets
 3. **Notion Errors**: Verify database ID and integration permissions
 4. **Scheduling Issues**: GitHub Actions may have delays during peak times
 
