@@ -82,39 +82,75 @@ def get_fitbit_data(date):
             data['calories'] = summary.get('caloriesOut', 0)
             data['active_minutes'] = summary.get('fairlyActiveMinutes', 0) + summary.get('veryActiveMinutes', 0)
         
-        # Sleep data with detailed stages
-        response = requests.get(f'{base_url}/sleep/date/{date}.json', headers=headers)
+        # Sleep data with detailed stages - use sleep log list endpoint for stages data
+        headers_v12 = headers.copy()
+        headers_v12['Accept-Language'] = 'en_US'
+        headers_v12['Accept-Version'] = '1.2'
+        
+        # Use sleep log list endpoint to get stages data
+        from datetime import datetime, timedelta
+        next_day = (datetime.strptime(date, '%Y-%m-%d') + timedelta(days=1)).strftime('%Y-%m-%d')
+        response = requests.get(f'https://api.fitbit.com/1.2/user/-/sleep/list.json?beforeDate={next_day}&sort=desc&limit=5', headers=headers_v12)
         if response.status_code == 200:
             sleep_data = response.json()
             if sleep_data.get('sleep'):
-                # Find the main sleep session (isMainSleep: true) or longest sleep
+                # Find the sleep session for the specific date
                 main_sleep = None
                 for sleep_session in sleep_data['sleep']:
-                    if sleep_session.get('isMainSleep', False):
+                    if sleep_session.get('dateOfSleep') == date and sleep_session.get('isMainSleep', False):
                         main_sleep = sleep_session
                         break
                 
-                # Fallback to first session if no main sleep found
+                # Fallback to any session for the date
                 if not main_sleep:
-                    main_sleep = sleep_data['sleep'][0]
+                    for sleep_session in sleep_data['sleep']:
+                        if sleep_session.get('dateOfSleep') == date:
+                            main_sleep = sleep_session
+                            break
                 data['sleep_hours'] = round(main_sleep.get('minutesAsleep', 0) / 60, 1)
                 data['sleep_efficiency'] = main_sleep.get('efficiency', 0)
                 data['sleep_start'] = main_sleep.get('startTime', '')
                 data['sleep_end'] = main_sleep.get('endTime', '')
                 
                 # Sleep stages - handle both new and old Fitbit formats
-                levels = main_sleep.get('levels', {}).get('summary', {})
-                if levels:
-                    # New format with detailed stages
-                    data['deep_sleep'] = levels.get('deep', {}).get('minutes', 0)
-                    data['light_sleep'] = levels.get('light', {}).get('minutes', 0)
-                    data['rem_sleep'] = levels.get('rem', {}).get('minutes', 0)
+                levels = main_sleep.get('levels', {})
+                
+                # First try new format with levels.summary
+                if 'summary' in levels and levels['summary']:
+                    summary = levels['summary']
+                    data['deep_sleep'] = summary.get('deep', {}).get('minutes', 0)
+                    data['light_sleep'] = summary.get('light', {}).get('minutes', 0)
+                    data['rem_sleep'] = summary.get('rem', {}).get('minutes', 0)
+                
+                # If no summary, try parsing levels.data for sleep stages
+                elif 'data' in levels and levels['data']:
+                    stage_minutes = {'deep': 0, 'light': 0, 'rem': 0}
+                    
+                    # Parse data groupings (stages > 3 minutes)
+                    for period in levels['data']:
+                        stage = period.get('level', '')
+                        if stage in stage_minutes:
+                            # Convert seconds to minutes
+                            duration_seconds = period.get('seconds', 0)
+                            stage_minutes[stage] += duration_seconds // 60
+                    
+                    # Parse shortData if available (short wake periods ≤ 3 minutes)
+                    if 'shortData' in levels:
+                        for period in levels.get('shortData', []):
+                            stage = period.get('level', '')
+                            if stage in stage_minutes:
+                                duration_seconds = period.get('seconds', 0)
+                                stage_minutes[stage] += duration_seconds // 60
+                    
+                    data['deep_sleep'] = stage_minutes['deep']
+                    data['light_sleep'] = stage_minutes['light']
+                    data['rem_sleep'] = stage_minutes['rem']
+                
                 else:
-                    # Old format - parse minuteData to calculate stages
+                    # Fallback to old format - parse minuteData
                     minute_data = main_sleep.get('minuteData', [])
                     if minute_data:
                         asleep_minutes = sum(1 for m in minute_data if m.get('value') == '1')
-                        restless_minutes = sum(1 for m in minute_data if m.get('value') == '2')
                         # For old format, treat all sleep as "light sleep"
                         data['light_sleep'] = asleep_minutes
                         data['deep_sleep'] = 0  # Not available in old format
