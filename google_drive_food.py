@@ -273,7 +273,7 @@ def analyze_food_image(image_url: str) -> Optional[str]:
             image_file = genai.upload_file(temp_path)
             
             # Initialize Gemini model
-            model = genai.GenerativeModel('gemini-2.0-flash-exp')
+            model = genai.GenerativeModel('gemini-2.5-flash')
             
             # Create prompt for food analysis
             prompt = """List only the food and drink items in this image. No descriptions, no presentation details, no extra words.

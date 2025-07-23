@@ -16,9 +16,15 @@ This project was developed with assistance from Claude Code. Here are some key t
 - **Alternatives**: AWS Lambda, Google Cloud Functions were considered but added complexity
 
 ### Programming Language: Python
-- **Libraries**: `requests`, `python-dotenv`, `notion-client`
+- **Libraries**: `requests`, `python-dotenv`, `notion-client`, `google-generativeai`, `pillow`
 - **Reasoning**: Simple, excellent API libraries, minimal dependencies
 - **Alternative**: Node.js was considered but Python was simpler for this use case
+
+### Food Photo Integration: Google Drive vs Google Photos
+- **Chosen**: Google Drive API with Gemini 2.0 Flash AI analysis
+- **Reasoning**: Google Photos API has severe restrictions for unverified apps and will become read-only for app-created content in 2025
+- **Alternative**: Google Photos API was initially attempted but faced authentication and policy restrictions
+- **AI Model**: Gemini 2.0 Flash chosen over OpenAI Vision for cost (free tier) and integration with Google ecosystem
 
 ## Technical Challenges Solved
 
@@ -57,6 +63,29 @@ notion.databases.update(
 ### Token Management
 **Problem**: Fitbit OAuth tokens expire regularly
 **Solution**: Implemented automatic token refresh in sync script with `.env` file updates
+
+### Food Photo Timestamp Extraction
+**Problem**: Need original photo timestamps (when taken) not upload timestamps
+**Solution**: Multi-layered timestamp extraction approach:
+1. **EXIF DateTimeOriginal** (most reliable - when photo was actually taken)
+2. **Google Drive image metadata** (original timestamp preserved)
+3. **Filename parsing** (IMG_20240723_142530.jpg patterns)
+4. **Upload time fallback** (with warning to user)
+
+### Google Photos API Restrictions
+**Problem**: Google Photos Library API requires app verification and restricts access for unverified apps
+**Solution**: Switched to Google Drive API which has more permissive access for personal use cases
+
+### AI Food Recognition Optimization
+**Problem**: Need concise food descriptions without fluff
+**Solution**: Iterative prompt engineering for Gemini 2.0 Flash:
+```python
+prompt = """List only the food and drink items in this image. No descriptions, no presentation details, no extra words.
+Good examples:
+- "cappuccino" (not "coffee with latte art")
+- "fried eggs with tomatoes and cucumber" (not "plate of fried eggs served with fresh tomatoes")
+Just the food items, separated by commas if multiple dishes."""
+```
 
 ## Development Process
 
@@ -124,6 +153,9 @@ notion.databases.update(
 - `requests==2.32.4` - HTTP client for API calls
 - `python-dotenv==1.1.1` - Environment variable management
 - `notion-client==2.4.0` - Official Notion API client
+- `google-generativeai==0.8.3` - Gemini AI for food recognition
+- `google-api-python-client==2.137.0` - Google Drive API access
+- `pillow==10.0.0` - Image processing and EXIF data extraction
 
 ### Development Tools
 - GitHub Actions for CI/CD and scheduling

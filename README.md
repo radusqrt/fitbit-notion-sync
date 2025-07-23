@@ -1,9 +1,10 @@
-# Fitbit to Notion Sync
+# Fitbit to Notion Sync with AI Food Tracking
 
-Automated daily sync of Fitbit health data to a Notion database using GitHub Actions.
+Automated daily sync of Fitbit health data and AI-powered food photo analysis to a Notion database using GitHub Actions.
 
 ## Features
 
+### 🏃‍♂️ **Fitbit Health Data**
 - **Automated Daily Sync**: Runs every day at 9 AM Zurich time
 - **Manual Backfill**: Fill in missing historical data for any date range
 - **Comprehensive Health Metrics**:
@@ -12,6 +13,13 @@ Automated daily sync of Fitbit health data to a Notion database using GitHub Act
   - Heart Rate: Resting HR, fat burn/cardio/peak zones
   - HRV: Daily and deep sleep heart rate variability
   - Body: Weight, BMI, body fat percentage (if available)
+
+### 🍽️ **AI Food Photo Tracking**
+- **Google Drive Integration**: Upload food photos to your designated Drive folder
+- **Original Timestamp Extraction**: Uses EXIF data to get when photos were actually taken
+- **Smart Meal Classification**: Automatically categorizes by time (breakfast/lunch/dinner)
+- **AI Food Recognition**: Gemini 2.0 Flash provides concise food descriptions
+- **Manual Sync Option**: On-demand processing via GitHub Actions
 
 ## Setup
 
@@ -26,19 +34,25 @@ Automated daily sync of Fitbit health data to a Notion database using GitHub Act
 3. Copy the integration token
 4. Share your health tracking database with the integration
 
-### 3. Get OAuth Tokens
+### 3. Google Drive & AI Setup
+1. **Google Cloud Console**: Enable Drive API at https://console.cloud.google.com/
+2. **Create OAuth credentials** for your application
+3. **Create Drive folder** for food photos
+4. **Get Gemini API key** from https://aistudio.google.com/app/apikey
+
+### 4. Get OAuth Tokens
 Run the OAuth helper to get your personal access tokens:
 ```bash
-python oauth_helper.py
+python oauth_helper.py  # For Fitbit
+python setup_drive_oauth.py  # For Google Drive (if needed)
 ```
-This will guide you through the Fitbit authorization process and save tokens to your `.env` file.
 
-### 4. GitHub Secrets Setup
+### 5. GitHub Secrets Setup
 **Required for automation:** Copy values from your `.env` file to GitHub Secrets.
 
 Go to your repository → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**
 
-Add these 6 secrets:
+**Fitbit & Notion:**
 - `FITBIT_CLIENT_ID` - Your Fitbit app Client ID
 - `FITBIT_CLIENT_SECRET` - Your Fitbit app Client Secret  
 - `FITBIT_ACCESS_TOKEN` - Generated from OAuth flow
@@ -46,108 +60,101 @@ Add these 6 secrets:
 - `NOTION_TOKEN` - Your Notion integration token
 - `NOTION_DATABASE_ID` - Your Notion database ID (from database URL)
 
-**Note:** GitHub Actions requires these secrets to access your APIs. The local `.env` file only works for manual runs.
+**Google Drive & AI:**
+- `GOOGLE_CLIENT_ID` - Your Google Cloud OAuth Client ID
+- `GOOGLE_CLIENT_SECRET` - Your Google Cloud OAuth Client Secret
+- `GOOGLE_ACCESS_TOKEN` - Generated from Drive OAuth flow
+- `GOOGLE_API_KEY` - Your Gemini API key
 
-### 5. Notion Database Schema
-Your Notion database should have these columns:
+### 6. Notion Database Schema
+Run the schema updater to add food tracking columns:
+```bash
+python update_notion_schema.py
+```
 
-**Required:**
+**Health Metrics Columns:**
 - Date (Date)
-- Steps (Number)
-- Wake Resting HR (Number)
+- Steps, Distance (km), Calories, Active Minutes (Numbers)
+- Sleep Hours, Sleep Efficiency, Deep/Light/REM Sleep (Numbers)
+- Sleep Start, Sleep End (Text)
+- Wake Resting HR, Fat Burn/Cardio/Peak Zone minutes (Numbers)
+- HRV Daily/Deep RMSSD, Weight, BMI, Body Fat % (Numbers)
 
-**Optional Activity:**
-- Distance (km) (Number)
-- Calories (Number)
-- Active Minutes (Number)
-
-**Sleep Metrics:**
-- Sleep Hours (Number)
-- Sleep Efficiency (Number)
-- Sleep Start (Text)
-- Sleep End (Text)
-- Deep Sleep (min) (Number)
-- Light Sleep (min) (Number)
-- REM Sleep (min) (Number)
-
-**Heart Rate Zones:**
-- Fat Burn Zone (min) (Number)
-- Cardio Zone (min) (Number)
-- Peak Zone (min) (Number)
-
-**HRV Metrics:**
-- HRV Daily RMSSD (Number)
-- HRV Deep RMSSD (Number)
-
-**Body Metrics (optional):**
-- Weight (kg) (Number)
-- BMI (Number)
-- Body Fat % (Number)
+**Food Tracking Columns:**
+- Breakfast, Lunch, Dinner (Rich Text)
+- Food Photos Processed (Checkbox)
 
 ## Usage
 
-### Automatic Sync
-The workflow runs automatically every day at 9 AM Zurich time via GitHub Actions.
+### 🔄 **Automatic Daily Sync**
+The workflow runs automatically every day at 9 AM Zurich time via GitHub Actions, processing:
+- Yesterday's Fitbit health data
+- Food photos uploaded to your Drive folder
 
-### Manual Sync
+### 🍽️ **Food Photo Workflow**
+1. **Take photos** of your meals during the day
+2. **Upload to Drive folder** each evening
+3. **Automatic processing** next morning extracts:
+   - Original photo timestamps (when you took the photo)
+   - AI food descriptions (e.g. "latte", "fried eggs with tomatoes")
+   - Meal classification (breakfast/lunch/dinner based on photo time)
+
+### 🛠️ **Manual Operations**
+
+**Manual Sync (including today's data):**
 ```bash
-# Run locally for today
-python sync_fitbit_notion.py
-
-# Or trigger GitHub Action manually from the Actions tab
-```
-
-### Backfill Historical Data
-```bash
-# Backfill last week (local)
-python backfill_fitbit_data.py
-
-# Backfill specific date range (local)
-python backfill_fitbit_data.py --start-date 2025-07-01 --end-date 2025-07-10
-
-# Backfill single day (local)
-python backfill_fitbit_data.py --start-date 2025-07-15
+# Local manual sync
+python manual_sync_today.py
 
 # Or use GitHub Actions:
-# 1. Go to Actions tab → "Manual Backfill Fitbit Data"
-# 2. Click "Run workflow"
-# 3. Choose date range or select "last week"
+# Go to Actions → "Manual Sync Today's Data" → Run workflow
 ```
 
-### Initial OAuth Setup
-If you need to get new tokens:
+**Fitbit-only sync:**
 ```bash
-python oauth_helper.py
+python sync_fitbit_notion.py
+```
+
+**Historical backfill:**
+```bash
+python backfill_fitbit_data.py --start-date 2025-07-01 --end-date 2025-07-10
 ```
 
 ## Files
 
-- `sync_fitbit_notion.py` - Main daily sync script
-- `backfill_fitbit_data.py` - Historical data backfill script
-- `oauth_helper.py` - One-time OAuth setup helper
-- `.github/workflows/sync-health-data.yml` - Daily sync GitHub Actions workflow
-- `.github/workflows/manual-backfill.yml` - Manual backfill GitHub Actions workflow
-- `requirements.txt` - Python dependencies
+**Core Scripts:**
+- `sync_fitbit_notion.py` - Main daily sync script (Fitbit + food photos)
+- `google_drive_food.py` - Google Drive food photo processing with AI
+- `manual_sync_today.py` - Manual sync for current day testing
+- `backfill_fitbit_data.py` - Historical Fitbit data backfill
+- `update_notion_schema.py` - Add food tracking columns to Notion
 
-## Data Handling
+**GitHub Actions:**
+- `.github/workflows/sync-health-data.yml` - Daily automated sync
+- `.github/workflows/manual-sync-today.yml` - On-demand manual sync
+- `.github/workflows/manual-backfill.yml` - Historical data backfill
 
-- **Sleep Stages**: Supports both new Fitbit API format (detailed stages) and older format (calculated from minute data)
-- **Main Sleep**: Prioritizes main sleep session over naps
-- **Token Refresh**: Automatically refreshes expired Fitbit tokens
-- **Error Handling**: Graceful handling of missing or incomplete data
+## AI Food Recognition
 
-## Privacy
+- **Powered by**: Gemini 2.0 Flash (state-of-the-art multimodal AI)
+- **Output**: Concise food descriptions ("latte", "pizza", "fried eggs with tomatoes")
+- **Cost**: Free (up to 1,500 requests/day)
+- **Privacy**: Images analyzed via Google's secure platform
 
-- All sensitive data is stored in GitHub Secrets
-- Personal health data is never committed to the repository
-- Fitbit tokens are automatically refreshed when needed
+## Privacy & Security
+
+- **GitHub Secrets**: All API keys stored securely
+- **No data retention**: Personal health data never committed to repository
+- **Temporary processing**: Food photos downloaded temporarily for AI analysis only
+- **Original timestamps**: System preserves when photos were actually taken
 
 ## Troubleshooting
 
-1. **Missing Data**: Check if your Fitbit device is syncing properly
-2. **Token Errors**: Re-run the OAuth flow with `oauth_helper.py` and update GitHub Secrets
-3. **Notion Errors**: Verify database ID and integration permissions
-4. **Scheduling Issues**: GitHub Actions may have delays during peak times
+1. **Missing Fitbit Data**: Check device sync and token expiration
+2. **Food Photos Not Found**: Verify Drive folder permissions and API enablement
+3. **Token Errors**: Re-run OAuth flows and update GitHub Secrets
+4. **Notion Errors**: Check database ID and integration permissions
+5. **AI Analysis Issues**: Verify Gemini API key and request limits
 
 ## License
 
