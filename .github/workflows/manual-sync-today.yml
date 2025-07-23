@@ -1,0 +1,165 @@
+name: Manual Sync Today's Data
+
+on:
+  workflow_dispatch:
+    inputs:
+      date:
+        description: 'Date to sync (YYYY-MM-DD) - leave empty for today'
+        required: false
+        type: string
+      include_food_photos:
+        description: 'Include food photo processing'
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  sync-today:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Determine sync date
+      id: date
+      run: |
+        if [ -n "${{ github.event.inputs.date }}" ]; then
+          echo "SYNC_DATE=${{ github.event.inputs.date }}" >> $GITHUB_OUTPUT
+          echo "Using provided date: ${{ github.event.inputs.date }}"
+        else
+          echo "SYNC_DATE=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+          echo "Using today's date: $(date +'%Y-%m-%d')"
+        fi
+    
+    - name: Create manual sync script
+      run: |
+        cat > manual_sync_today.py << 'EOF'
+        #!/usr/bin/env python3
+        """
+        Manual sync for specified date (default: today)
+        """
+        
+        import os
+        import sys
+        import requests
+        from datetime import datetime, timedelta
+        from notion_client import Client
+        from dotenv import load_dotenv
+        from google_drive_food import process_drive_food_photos, format_meal_text
+        
+        def get_sync_date():
+            """Get date from environment or command line argument"""
+            if len(sys.argv) > 1:
+                return sys.argv[1]
+            return os.getenv('SYNC_DATE', datetime.now().strftime('%Y-%m-%d'))
+        
+        def get_fitbit_data(date):
+            """Simplified Fitbit data fetch - reuse existing function"""
+            # Import from main sync script
+            sys.path.append('.')
+            from sync_fitbit_notion import get_fitbit_data as fetch_fitbit
+            return fetch_fitbit(date)
+        
+        def update_notion_database(date, fitbit_data, food_data=None):
+            """Update Notion - reuse existing function"""
+            sys.path.append('.')
+            from sync_fitbit_notion import update_notion_database as update_notion
+            return update_notion(date, fitbit_data, food_data)
+        
+        def main():
+            """Main manual sync function"""
+            sync_date = get_sync_date()
+            include_food = os.getenv('INCLUDE_FOOD_PHOTOS', 'true').lower() == 'true'
+            
+            print(f"🔄 Starting MANUAL sync for: {sync_date}")
+            print(f"🍽️ Food photos: {'Enabled' if include_food else 'Disabled'}")
+            
+            # Get Fitbit data
+            print("📊 Fetching Fitbit data...")
+            try:
+                fitbit_data = get_fitbit_data(sync_date)
+                if fitbit_data:
+                    print("✅ Fitbit data fetched successfully")
+                    for key, value in fitbit_data.items():
+                        if value is not None:
+                            print(f"  {key}: {value}")
+                else:
+                    print("⚠️ No Fitbit data available")
+                    fitbit_data = {}
+            except Exception as e:
+                print(f"❌ Error fetching Fitbit data: {e}")
+                fitbit_data = {}
+            
+            # Get food data if enabled
+            food_data = None
+            if include_food:
+                print("🍽️ Processing food photos from Drive...")
+                try:
+                    food_data = process_drive_food_photos(sync_date)
+                    
+                    food_found = any(food_data.values())
+                    if food_found:
+                        print("✅ Food data processed:")
+                        for meal, foods in food_data.items():
+                            if foods:
+                                print(f"  {meal.title()}: {format_meal_text(foods)}")
+                    else:
+                        print("  No food photos found for this date")
+                        
+                except Exception as e:
+                    print(f"⚠️ Error processing food photos: {e}")
+                    food_data = None
+            
+            # Update Notion
+            print("📝 Updating Notion database...")
+            try:
+                update_notion_database(sync_date, fitbit_data, food_data)
+                print("✅ Notion updated successfully")
+            except Exception as e:
+                print(f"❌ Error updating Notion: {e}")
+            
+            print(f"🎉 Manual sync completed for {sync_date}!")
+        
+        if __name__ == "__main__":
+            main()
+        EOF
+        
+        chmod +x manual_sync_today.py
+    
+    - name: Run manual sync
+      env:
+        FITBIT_CLIENT_ID: ${{ secrets.FITBIT_CLIENT_ID }}
+        FITBIT_CLIENT_SECRET: ${{ secrets.FITBIT_CLIENT_SECRET }}
+        FITBIT_ACCESS_TOKEN: ${{ secrets.FITBIT_ACCESS_TOKEN }}
+        FITBIT_REFRESH_TOKEN: ${{ secrets.FITBIT_REFRESH_TOKEN }}
+        NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+        NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+        GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+        GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+        GOOGLE_ACCESS_TOKEN: ${{ secrets.GOOGLE_ACCESS_TOKEN }}
+        GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+        GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        SYNC_DATE: ${{ steps.date.outputs.SYNC_DATE }}
+        INCLUDE_FOOD_PHOTOS: ${{ github.event.inputs.include_food_photos }}
+      run: |
+        python manual_sync_today.py
+    
+    - name: Display sync summary
+      run: |
+        echo "## Sync Summary" >> $GITHUB_STEP_SUMMARY
+        echo "- **Date**: ${{ steps.date.outputs.SYNC_DATE }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Food Photos**: ${{ github.event.inputs.include_food_photos }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Status**: ✅ Completed" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Check your Notion database for updated data!" >> $GITHUB_STEP_SUMMARY

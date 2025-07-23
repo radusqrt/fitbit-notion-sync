@@ -9,6 +9,7 @@ import requests
 from datetime import datetime, timedelta
 from notion_client import Client
 from dotenv import load_dotenv
+from google_drive_food import process_drive_food_photos, format_meal_text
 
 def get_yesterday_date():
     """Get yesterday's date in YYYY-MM-DD format (Zurich timezone)"""
@@ -230,7 +231,7 @@ def get_fitbit_data(date):
         print(f"❌ Error fetching Fitbit data: {e}")
         return None
 
-def update_notion_database(date, fitbit_data):
+def update_notion_database(date, fitbit_data, food_data=None):
     """Update or create entry in Notion database"""
     load_dotenv()
     
@@ -293,6 +294,20 @@ def update_notion_database(date, fitbit_data):
     if fitbit_data.get('hrv_deep_rmssd'):
         properties["HRV Deep RMSSD"] = {"number": fitbit_data['hrv_deep_rmssd']}
     
+    # Add food data if available
+    if food_data:
+        if food_data.get('breakfast'):
+            properties["Breakfast"] = {"rich_text": [{"text": {"content": format_meal_text(food_data['breakfast'])}}]}
+        
+        if food_data.get('lunch'):
+            properties["Lunch"] = {"rich_text": [{"text": {"content": format_meal_text(food_data['lunch'])}}]}
+        
+        if food_data.get('dinner'):
+            properties["Dinner"] = {"rich_text": [{"text": {"content": format_meal_text(food_data['dinner'])}}]}
+        
+        # Mark that food photos were processed
+        properties["Food Photos Processed"] = {"checkbox": True}
+    
     try:
         if existing_pages['results']:
             # Update existing page
@@ -327,8 +342,27 @@ def main():
     for key, value in fitbit_data.items():
         print(f"  {key}: {value}")
     
+    # Get Google Drive food data
+    print("🍽️ Processing food photos from Drive...")
+    try:
+        food_data = process_drive_food_photos(date)
+        
+        # Log food data
+        food_found = any(food_data.values())
+        if food_found:
+            print("📊 Food data processed:")
+            for meal, foods in food_data.items():
+                if foods:
+                    print(f"  {meal}: {format_meal_text(foods)}")
+        else:
+            print("  No food photos found for this date")
+            
+    except Exception as e:
+        print(f"⚠️ Error processing food photos: {e}")
+        food_data = None
+    
     # Update Notion
-    update_notion_database(date, fitbit_data)
+    update_notion_database(date, fitbit_data, food_data)
     
     print("🎉 Sync completed!")
 
