@@ -9,7 +9,17 @@ import requests
 from datetime import datetime, timedelta
 from notion_client import Client
 from dotenv import load_dotenv
-from google_drive_food import process_drive_food_photos, format_meal_text
+# Import Google Drive functionality with fallback
+try:
+    from google_drive_food import process_drive_food_photos, format_meal_text
+    GOOGLE_DRIVE_AVAILABLE = True
+except ImportError as e:
+    print(f"⚠️ Google Drive integration not available: {e}")
+    GOOGLE_DRIVE_AVAILABLE = False
+    def process_drive_food_photos(date):
+        return None
+    def format_meal_text(foods):
+        return ""
 
 def get_yesterday_date():
     """Get yesterday's date in YYYY-MM-DD format (Zurich timezone)"""
@@ -343,22 +353,25 @@ def main():
         print(f"  {key}: {value}")
     
     # Get Google Drive food data
-    print("🍽️ Processing food photos from Drive...")
-    try:
-        food_data = process_drive_food_photos(date)
-        
-        # Log food data
-        food_found = any(food_data.values())
-        if food_found:
-            print("📊 Food data processed:")
-            for meal, foods in food_data.items():
-                if foods:
-                    print(f"  {meal}: {format_meal_text(foods)}")
-        else:
-            print("  No food photos found for this date")
+    if GOOGLE_DRIVE_AVAILABLE:
+        print("🍽️ Processing food photos from Drive...")
+        try:
+            food_data = process_drive_food_photos(date)
             
-    except Exception as e:
-        print(f"⚠️ Error processing food photos: {e}")
+            # Log food data
+            if food_data and any(food_data.values()):
+                print("📊 Food data processed:")
+                for meal, foods in food_data.items():
+                    if foods:
+                        print(f"  {meal}: {format_meal_text(foods)}")
+            else:
+                print("  No food photos found for this date")
+                
+        except Exception as e:
+            print(f"⚠️ Error processing food photos: {e}")
+            food_data = None
+    else:
+        print("⚠️ Google Drive integration disabled - skipping food photos")
         food_data = None
     
     # Update Notion
